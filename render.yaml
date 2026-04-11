@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: siem-dashboard
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DB_PATH
+        value: /data/siem.db
+    disk:
+      name: siem-data
+      mountPath: /data
+      sizeGB: 1

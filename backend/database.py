@@ -2,8 +2,10 @@ from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker
 import datetime
+import os
 
-SQLALCHEMY_DATABASE_URL = "sqlite:///./siem.db"
+DB_PATH = os.getenv("DB_PATH", "./siem.db")
+SQLALCHEMY_DATABASE_URL = f"sqlite:///{DB_PATH}"
 # For PostgreSQL use: "postgresql://user:password@postgresserver/db"
 
 engine = create_engine(
