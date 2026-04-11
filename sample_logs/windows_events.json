@@ -1,0 +1,3 @@
+{"EventID": 1102, "Computer": "WinServer-01", "Message": "The audit log was cleared.", "Level": 1}
+{"EventID": 4624, "Computer": "WinServer-01", "Message": "An account was successfully logged on.", "Level": 4}
+{"EventID": 4625, "Computer": "WinServer-01", "Message": "An account failed to log on.", "Level": 3}

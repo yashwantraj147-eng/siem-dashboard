@@ -1,0 +1,109 @@
+rules:
+  - name: "Brute Force Attempt"
+    description: "Multiple failed login attempts detected."
+    condition:
+      field: severity
+      operator: equals
+      value: "high"
+      category: "auth"
+    threshold: 5
+    time_window: 60
+    severity: "critical"
+
+  - name: "Multiple 404 Errors"
+    description: "Potential directory traversal or web scan."
+    condition:
+      field: message
+      operator: contains
+      value: "404"
+      category: "web"
+    threshold: 10
+    time_window: 60
+    severity: "medium"
+
+  - name: "Privilege Escalation Activity"
+    description: "User attempting sudo command."
+    condition:
+      field: message
+      operator: contains
+      value: "sudo:"
+      category: "auth"
+    threshold: 1
+    time_window: 0
+    severity: "high"
+
+  - name: "Repeated Web Rejections"
+    description: "Lots of 403 Forbidden responses."
+    condition:
+      field: message
+      operator: contains
+      value: "Status 403"
+    threshold: 5
+    time_window: 60
+    severity: "medium"
+
+  - name: "Suspicious Windows Event"
+    description: "Security log cleared (EventID 1102)."
+    condition:
+      field: message
+      operator: contains
+      value: "EventID 1102"
+      category: "windows"
+    threshold: 1
+    time_window: 0
+    severity: "critical"
+
+  - name: "SSH Connection Opened"
+    description: "Info level SSH connection."
+    condition:
+      field: message
+      operator: contains
+      value: "Accepted password"
+      category: "auth"
+    threshold: 1
+    time_window: 0
+    severity: "info"
+
+  - name: "Malware Download Attempt"
+    description: "Request for suspicious file extension."
+    condition:
+      field: message
+      operator: contains
+      value: ".exe"
+      category: "web"
+    threshold: 1
+    time_window: 0
+    severity: "high"
+
+  - name: "Database Injection Attempt"
+    description: "SQL syntax in web requests."
+    condition:
+      field: message
+      operator: contains
+      value: "UNION SELECT"
+      category: "web"
+    threshold: 1
+    time_window: 0
+    severity: "critical"
+
+  - name: "Multiple SSH Failures"
+    description: "SSH failed passwords."
+    condition:
+      field: message
+      operator: contains
+      value: "Failed password"
+      category: "auth"
+    threshold: 3
+    time_window: 60
+    severity: "high"
+
+  - name: "High Severity System Event"
+    description: "System error or fatal log reported."
+    condition:
+      field: severity
+      operator: equals
+      value: "high"
+      category: "system"
+    threshold: 1
+    time_window: 0
+    severity: "high"

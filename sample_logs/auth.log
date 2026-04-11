@@ -1,0 +1,7 @@
+Oct 11 12:00:01 web-server sshd[1234]: Accepted password for admin from 192.168.1.100 port 54321 ssh2
+Oct 11 12:05:01 web-server sshd[1235]: Failed password for root from 10.0.0.5 port 54322 ssh2
+Oct 11 12:05:05 web-server sshd[1235]: Failed password for root from 10.0.0.5 port 54322 ssh2
+Oct 11 12:05:10 web-server sshd[1235]: Failed password for root from 10.0.0.5 port 54322 ssh2
+Oct 11 12:05:15 web-server sshd[1235]: Failed password for root from 10.0.0.5 port 54322 ssh2
+Oct 11 12:05:20 web-server sshd[1235]: Failed password for root from 10.0.0.5 port 54322 ssh2
+Oct 11 12:10:00 web-server sshd[1240]: Invalid user unknown from 10.0.0.10

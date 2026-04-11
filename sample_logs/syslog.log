@@ -1,0 +1,5 @@
+Oct 11 12:00:00 ubuntu-host kernel: [    0.000000] Linux version 5.4.0-150-generic
+Oct 11 12:01:15 ubuntu-host sudo: pam_unix(sudo:session): session opened for user root by (uid=0)
+Oct 11 12:05:00 ubuntu-host systemd[1]: Started System Logging Service.
+Oct 11 12:10:05 ubuntu-host kernel: CPU temperature error fatal
+Oct 11 12:15:30 ubuntu-host cron[854]: (root) CMD (command -v debian-sa1 > /dev/null)
