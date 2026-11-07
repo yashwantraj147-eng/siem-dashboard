@@ -15,6 +15,7 @@ from sqlalchemy import desc, func
 
 from . import database, schemas, ingestion
 from .database import LogEventDB, AlertDB
+from .broadcaster import broadcaster
 
 # Initialize Database
 database.init_db()
@@ -42,29 +43,6 @@ MAX_UPLOAD_SIZE = int(os.getenv("MAX_UPLOAD_SIZE_MB", "50")) * 1024 * 1024
 API_KEY = os.getenv("SIEM_API_KEY", "").strip()
 
 
-# REAL-TIME SSE BROADCASTER
-class SSEBroadcaster:
-    def __init__(self):
-        self.listeners: Set[asyncio.Queue] = set()
-
-    async def subscribe(self) -> asyncio.Queue:
-        queue = asyncio.Queue(maxsize=100)
-        self.listeners.add(queue)
-        return queue
-
-    def unsubscribe(self, queue: asyncio.Queue):
-        self.listeners.discard(queue)
-
-    def broadcast_sync(self, event_type: str, data: dict):
-        message = json.dumps({"type": event_type, "payload": data})
-        for queue in list(self.listeners):
-            try:
-                queue.put_nowait(message)
-            except (asyncio.QueueFull, Exception):
-                pass
-
-
-broadcaster = SSEBroadcaster()
 
 
 def verify_api_key(x_api_key: Optional[str] = Header(None)):

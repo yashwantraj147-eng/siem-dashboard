@@ -6,6 +6,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 import yaml
 from .alerting import send_alert_webhook
+from .broadcaster import broadcaster
 from .database import AlertDB, LogEventDB
 
 logger = logging.getLogger(__name__)
@@ -142,3 +143,13 @@ class RulesEngine:
 
         logger.info(f"Generated alert: {alert.rule_name} (Severity: {alert.severity}) for host: {host_str}")
         send_alert_webhook(alert.rule_name, alert.severity, alert.description, host=host_str)
+        broadcaster.broadcast_sync("alert_generated", {
+            "id": alert.id,
+            "rule_name": alert.rule_name,
+            "severity": alert.severity,
+            "mitre_technique": alert.mitre_technique,
+            "mitre_tactic": alert.mitre_tactic,
+            "description": alert.description,
+            "events_correlated": alert.events_correlated,
+            "timestamp": alert.timestamp.isoformat()
+        })
