@@ -1,0 +1,28 @@
+version: "3.8"
+
+services:
+  siem-dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: siem_dashboard_app
+    ports:
+      - "8000:8000"
+    environment:
+      - DB_PATH=/data/siem.db
+      - WEBHOOK_URL=${WEBHOOK_URL:-}
+      - SIEM_API_KEY=${SIEM_API_KEY:-}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+    volumes:
+      - siem_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  siem_data:
+    driver: local
+

@@ -1,28 +1,44 @@
-import requests
 import logging
+import os
+import threading
+from typing import Optional
+import httpx
 
 logger = logging.getLogger(__name__)
 
-# Configure Webhook URL for Slack or Discord. 
-# Empty string means disabled.
-WEBHOOK_URL = "" 
 
-def send_alert_webhook(rule_name: str, severity: str, description: str):
+def get_webhook_url() -> str:
+    return os.getenv("WEBHOOK_URL", "").strip()
+
+
+def _dispatch_webhook_sync(url: str, payload: dict):
+    try:
+        with httpx.Client(timeout=4.0) as client:
+            response = client.post(url, json=payload)
+            response.raise_for_status()
+            logger.info(f"Webhook alert dispatched successfully (status {response.status_code})")
+    except Exception as e:
+        logger.error(f"Failed to dispatch webhook alert: {e}")
+
+
+def send_alert_webhook(rule_name: str, severity: str, description: str, host: Optional[str] = None):
     """
-    Send an alert to a configured webhook URL (e.g., Slack, Discord).
+    Send an alert to a configured webhook URL (Slack, Discord, Teams, etc.).
+    Dispatches in a background thread so log ingestion is never blocked.
     """
-    if not WEBHOOK_URL:
-        logger.info("Webhook alerting is disabled. Set WEBHOOK_URL to enable.")
+    webhook_url = get_webhook_url()
+    if not webhook_url:
+        logger.debug("Webhook alerting is disabled. Set WEBHOOK_URL environment variable to enable.")
         return
 
-    # Using Slack webhook payload format as a generic standard
+    host_info = f"\n*Host*: {host}" if host else ""
     payload = {
-        "text": f"🚨 *SIEM ALERT* 🚨\n*Rule*: {rule_name}\n*Severity*: {severity}\n*Description*: {description}"
+        "text": f"🚨 *SIEM ALERT* 🚨\n*Rule*: {rule_name}\n*Severity*: {severity.upper()}{host_info}\n*Description*: {description}"
     }
-    
-    try:
-        response = requests.post(WEBHOOK_URL, json=payload, timeout=5)
-        response.raise_for_status()
-        logger.info(f"Successfully sent webhook alert for rule: {rule_name}")
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to send webhook alert: {e}")
+
+    thread = threading.Thread(
+        target=_dispatch_webhook_sync,
+        args=(webhook_url, payload),
+        daemon=True,
+    )
+    thread.start()

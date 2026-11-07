@@ -1,17 +1,18 @@
-import yaml
 import logging
 import os
-from typing import List, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional
+from sqlalchemy import func
 from sqlalchemy.orm import Session
-from .database import LogEventDB, AlertDB
+import yaml
 from .alerting import send_alert_webhook
+from .database import AlertDB, LogEventDB
 
 logger = logging.getLogger(__name__)
 
+
 class RulesEngine:
     def __init__(self, rules_file_path: str = "rules/default_rules.yaml"):
-        # Make the path relative to the project root if the current working directory isn't exactly where expected
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.rules_file_path = os.path.join(base_dir, rules_file_path)
         self.rules = self.load_rules()
@@ -19,30 +20,28 @@ class RulesEngine:
 
     def load_rules(self) -> List[Dict[str, Any]]:
         try:
-            with open(self.rules_file_path, "r") as f:
+            with open(self.rules_file_path, "r", encoding="utf-8") as f:
                 content = yaml.safe_load(f)
-                return content.get("rules", [])
+                return content.get("rules", []) if content else []
         except Exception as e:
             logger.error(f"Failed to load rules: {e}")
             return []
 
     def evaluate_event(self, event: LogEventDB, db: Session):
         """
-        Evaluate a single event against all rules.
+        Evaluate a single event against all configured detection rules.
         """
         if not self.rules:
-            # Try reloading rules if none are loaded (could have been missing at startup)
             self.rules = self.load_rules()
-            
+
         for rule in self.rules:
             if self._match_condition(event, rule.get("condition", {})):
                 self._process_rule_match(event, rule, db)
 
     def _match_condition(self, event: LogEventDB, condition: Dict[str, Any]) -> bool:
         """
-        Check if an event matches a simple condition.
+        Check if an event matches a rule condition.
         """
-        # Optional category filter
         if "category" in condition and event.category != condition["category"]:
             return False
 
@@ -50,7 +49,7 @@ class RulesEngine:
         operator = condition.get("operator")
         value = condition.get("value")
 
-        if not field or not operator or not value:
+        if not field or not operator or value is None:
             return False
 
         event_value = getattr(event, field, None)
@@ -61,54 +60,85 @@ class RulesEngine:
             return str(event_value).lower() == str(value).lower()
         elif operator == "contains":
             return str(value).lower() in str(event_value).lower()
-        
+
         return False
+
+    def _apply_condition_filter(self, query, condition: Dict[str, Any]):
+        """
+        Apply condition filters to a SQLAlchemy query so correlation only counts matching events.
+        """
+        if "category" in condition:
+            query = query.filter(LogEventDB.category == condition["category"])
+
+        field = condition.get("field")
+        operator = condition.get("operator")
+        value = condition.get("value")
+
+        if field and operator and value is not None and hasattr(LogEventDB, field):
+            col = getattr(LogEventDB, field)
+            if operator == "equals":
+                query = query.filter(func.lower(col) == str(value).lower())
+            elif operator == "contains":
+                query = query.filter(col.ilike(f"%{value}%"))
+
+        return query
 
     def _process_rule_match(self, event: LogEventDB, rule: Dict[str, Any], db: Session):
         threshold = rule.get("threshold", 1)
         time_window = rule.get("time_window", 0)
-        
-        # Simple single-event rule
+
+        # Single-event threshold
         if threshold <= 1:
-            self._trigger_alert(rule, 1, db)
+            self._trigger_alert(rule, 1, event, db)
             return
 
-        # Correlation rule
+        # Correlation rule with time-window aggregation
         if time_window > 0:
-            past_time = datetime.utcnow() - timedelta(seconds=time_window)
-            
-            # Count similar events from the same host in the time window
-            count = db.query(LogEventDB).filter(
+            event_time = event.timestamp or datetime.now(timezone.utc)
+            past_time = event_time - timedelta(seconds=time_window)
+
+            query = db.query(LogEventDB).filter(
                 LogEventDB.host == event.host,
-                LogEventDB.timestamp >= past_time
-            ).count()
+                LogEventDB.timestamp >= past_time,
+                LogEventDB.timestamp <= event_time,
+            )
 
-            # If we hit the threshold, trigger alert
+            # Apply rule condition filters to query
+            query = self._apply_condition_filter(query, rule.get("condition", {}))
+            count = query.count()
+
             if count >= threshold:
-                self._trigger_alert(rule, count, db)
+                self._trigger_alert(rule, count, event, db)
 
-    def _trigger_alert(self, rule: Dict[str, Any], count: int, db: Session):
-        # Prevent spamming the same alert for the same time window by simple dedup.
+    def _trigger_alert(self, rule: Dict[str, Any], count: int, event: Optional[LogEventDB], db: Session):
+        now = datetime.now(timezone.utc)
+        host_str = event.host if event else "unknown"
+        alert_desc = f"{rule['description']} (Host: {host_str})"
+
+        # Deduplicate per (rule_name, host) in 1-minute window to avoid alert storms
         recent_alert = db.query(AlertDB).filter(
             AlertDB.rule_name == rule["name"],
-            AlertDB.timestamp >= datetime.utcnow() - timedelta(minutes=1)
+            AlertDB.description.contains(host_str),
+            AlertDB.timestamp >= now - timedelta(minutes=1),
         ).first()
 
         if recent_alert:
-            return # Skip if we already alerted recently
+            return
 
         alert = AlertDB(
             rule_name=rule["name"],
             severity=rule["severity"],
-            description=rule["description"],
+            description=alert_desc,
             events_correlated=count,
-            acknowledged=0
+            acknowledged=0,
+            timestamp=now,
+            mitre_technique=rule.get("mitre_technique"),
+            mitre_tactic=rule.get("mitre_tactic"),
+            status="new"
         )
         db.add(alert)
         db.commit()
         db.refresh(alert)
-        
-        logger.info(f"Generated alert: {alert.rule_name} (Severity: {alert.severity})")
-        
-        # Send webhook
-        send_alert_webhook(alert.rule_name, alert.severity, alert.description)
+
+        logger.info(f"Generated alert: {alert.rule_name} (Severity: {alert.severity}) for host: {host_str}")
+        send_alert_webhook(alert.rule_name, alert.severity, alert.description, host=host_str)

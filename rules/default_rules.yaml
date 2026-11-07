@@ -1,6 +1,8 @@
 rules:
   - name: "Brute Force Attempt"
     description: "Multiple failed login attempts detected."
+    mitre_technique: "T1110.001"
+    mitre_tactic: "Credential Access"
     condition:
       field: severity
       operator: equals
@@ -11,7 +13,9 @@ rules:
     severity: "critical"
 
   - name: "Multiple 404 Errors"
-    description: "Potential directory traversal or web scan."
+    description: "Potential directory traversal or web vulnerability scanning."
+    mitre_technique: "T1595.002"
+    mitre_tactic: "Reconnaissance"
     condition:
       field: message
       operator: contains
@@ -23,6 +27,8 @@ rules:
 
   - name: "Privilege Escalation Activity"
     description: "User attempting sudo command."
+    mitre_technique: "T1548.003"
+    mitre_tactic: "Privilege Escalation"
     condition:
       field: message
       operator: contains
@@ -34,6 +40,8 @@ rules:
 
   - name: "Repeated Web Rejections"
     description: "Lots of 403 Forbidden responses."
+    mitre_technique: "T1190"
+    mitre_tactic: "Initial Access"
     condition:
       field: message
       operator: contains
@@ -43,7 +51,9 @@ rules:
     severity: "medium"
 
   - name: "Suspicious Windows Event"
-    description: "Security log cleared (EventID 1102)."
+    description: "Security audit log was cleared (EventID 1102)."
+    mitre_technique: "T1070.001"
+    mitre_tactic: "Defense Evasion"
     condition:
       field: message
       operator: contains
@@ -55,6 +65,8 @@ rules:
 
   - name: "SSH Connection Opened"
     description: "Info level SSH connection."
+    mitre_technique: "T1021.004"
+    mitre_tactic: "Lateral Movement"
     condition:
       field: message
       operator: contains
@@ -65,7 +77,9 @@ rules:
     severity: "info"
 
   - name: "Malware Download Attempt"
-    description: "Request for suspicious file extension."
+    description: "Request for suspicious executable file extension."
+    mitre_technique: "T1204.002"
+    mitre_tactic: "Execution"
     condition:
       field: message
       operator: contains
@@ -76,7 +90,9 @@ rules:
     severity: "high"
 
   - name: "Database Injection Attempt"
-    description: "SQL syntax in web requests."
+    description: "SQL injection syntax detected in web request."
+    mitre_technique: "T1190"
+    mitre_tactic: "Initial Access"
     condition:
       field: message
       operator: contains
@@ -87,7 +103,9 @@ rules:
     severity: "critical"
 
   - name: "Multiple SSH Failures"
-    description: "SSH failed passwords."
+    description: "Repeated SSH authentication password failures."
+    mitre_technique: "T1110.001"
+    mitre_tactic: "Credential Access"
     condition:
       field: message
       operator: contains
@@ -98,7 +116,9 @@ rules:
     severity: "high"
 
   - name: "High Severity System Event"
-    description: "System error or fatal log reported."
+    description: "System kernel fatal error reported."
+    mitre_technique: "T1499"
+    mitre_tactic: "Impact"
     condition:
       field: severity
       operator: equals
