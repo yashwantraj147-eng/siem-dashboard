@@ -1,7 +1,7 @@
 import logging
 import os
 import threading
-from typing import Optional
+
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -17,11 +17,11 @@ def _dispatch_webhook_sync(url: str, payload: dict):
             response = client.post(url, json=payload)
             response.raise_for_status()
             logger.info(f"Webhook alert dispatched successfully (status {response.status_code})")
-    except Exception as e:
+    except (httpx.HTTPError, OSError) as e:
         logger.error(f"Failed to dispatch webhook alert: {e}")
 
 
-def send_alert_webhook(rule_name: str, severity: str, description: str, host: Optional[str] = None):
+def send_alert_webhook(rule_name: str, severity: str, description: str, host: str | None = None):
     """
     Send an alert to a configured webhook URL (Slack, Discord, Teams, etc.).
     Dispatches in a background thread so log ingestion is never blocked.

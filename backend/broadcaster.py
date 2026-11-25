@@ -1,7 +1,6 @@
 import asyncio
 import json
 import logging
-from typing import Set
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +11,7 @@ class SSEBroadcaster:
     enabling sub-second real-time telemetry streaming to SOC analyst dashboards.
     """
     def __init__(self):
-        self.listeners: Set[asyncio.Queue] = set()
+        self.listeners: set[asyncio.Queue] = set()
 
     async def subscribe(self) -> asyncio.Queue:
         queue = asyncio.Queue(maxsize=100)
@@ -33,8 +32,8 @@ class SSEBroadcaster:
         for queue in list(self.listeners):
             try:
                 queue.put_nowait(message)
-            except (asyncio.QueueFull, Exception):
-                pass
+            except asyncio.QueueFull:
+                logger.debug("Dropped SSE message for slow consumer queue")
 
 
 # Global singleton instance

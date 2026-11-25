@@ -1,9 +1,11 @@
-from datetime import datetime, timezone
 import json
 import logging
 import re
-from typing import List, Optional
+from datetime import UTC, datetime
+
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
+
 from .database import LogEventDB
 from .rules_engine import RulesEngine
 from .schemas import LogEventCreate
@@ -14,39 +16,39 @@ logger = logging.getLogger(__name__)
 rules_engine = RulesEngine()
 
 
-def _parse_syslog_timestamp(ts_str: str) -> Optional[datetime]:
+def _parse_syslog_timestamp(ts_str: str) -> datetime | None:
     try:
         clean_ts = " ".join(ts_str.split())
-        current_year = datetime.now(timezone.utc).year
+        current_year = datetime.now(UTC).year
         dt = datetime.strptime(f"{current_year} {clean_ts}", "%Y %b %d %H:%M:%S")
-        return dt.replace(tzinfo=timezone.utc)
-    except Exception:
+        return dt.replace(tzinfo=UTC)
+    except ValueError:
         return None
 
 
-def _parse_nginx_timestamp(ts_str: str) -> Optional[datetime]:
+def _parse_nginx_timestamp(ts_str: str) -> datetime | None:
     try:
         dt = datetime.strptime(ts_str, "%d/%b/%Y:%H:%M:%S %z")
-        return dt.astimezone(timezone.utc)
-    except Exception:
+        return dt.astimezone(UTC)
+    except ValueError:
         try:
             dt = datetime.strptime(ts_str.split()[0], "%d/%b/%Y:%H:%M:%S")
-            return dt.replace(tzinfo=timezone.utc)
-        except Exception:
+            return dt.replace(tzinfo=UTC)
+        except (ValueError, IndexError):
             return None
 
 
-def _parse_iso_timestamp(ts_str: str) -> Optional[datetime]:
+def _parse_iso_timestamp(ts_str: str) -> datetime | None:
     try:
-        dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(ts_str)
         if dt.tzinfo is None:
-            return dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc)
-    except Exception:
+            return dt.replace(tzinfo=UTC)
+        return dt.astimezone(UTC)
+    except ValueError:
         return None
 
 
-def parse_syslog(line: str) -> Optional[LogEventCreate]:
+def parse_syslog(line: str) -> LogEventCreate | None:
     pattern = r"([A-Z][a-z]{2}\s+\d+\s+\d+:\d+:\d+)\s+(\S+)\s+(.*?):\s+(.*)"
     match = re.search(pattern, line)
     if match:
@@ -77,7 +79,7 @@ def parse_syslog(line: str) -> Optional[LogEventCreate]:
     )
 
 
-def parse_auth_log(line: str) -> Optional[LogEventCreate]:
+def parse_auth_log(line: str) -> LogEventCreate | None:
     event = parse_syslog(line)
     if event:
         event.category = "auth"
@@ -87,7 +89,7 @@ def parse_auth_log(line: str) -> Optional[LogEventCreate]:
     return event
 
 
-def parse_nginx_access(line: str) -> Optional[LogEventCreate]:
+def parse_nginx_access(line: str) -> LogEventCreate | None:
     # e.g., 127.0.0.1 - - [10/Oct/2023:13:55:36 -0700] "GET /test HTTP/1.1" 200 2326
     pattern = r"(\S+)\s+\S+\s+\S+\s+\[([^\]]+)\]\s+\"([^\"]+)\"\s+(\d+)\s+\d+"
     match = re.search(pattern, line)
@@ -118,7 +120,7 @@ def parse_nginx_access(line: str) -> Optional[LogEventCreate]:
     )
 
 
-def parse_windows_event_json(json_str: str) -> Optional[LogEventCreate]:
+def parse_windows_event_json(json_str: str) -> LogEventCreate | None:
     try:
         data = json.loads(json_str)
         host = data.get("Computer") or data.get("Host") or data.get("host") or "unknown"
@@ -148,7 +150,7 @@ def parse_windows_event_json(json_str: str) -> Optional[LogEventCreate]:
             message=f"EventID {event_id}: {message}",
             raw=json_str,
         )
-    except Exception:
+    except (json.JSONDecodeError, TypeError, AttributeError, ValueError):
         return LogEventCreate(
             host="unknown",
             severity="info",
@@ -158,7 +160,7 @@ def parse_windows_event_json(json_str: str) -> Optional[LogEventCreate]:
         )
 
 
-def parse_log_line(line: str, log_type: str) -> Optional[LogEventCreate]:
+def parse_log_line(line: str, log_type: str) -> LogEventCreate | None:
     if log_type == "syslog":
         return parse_syslog(line)
     elif log_type == "auth":
@@ -177,7 +179,7 @@ def parse_log_line(line: str, log_type: str) -> Optional[LogEventCreate]:
         )
 
 
-def process_log_entries(events_data: List[LogEventCreate], db: Session) -> List[LogEventDB]:
+def process_log_entries(events_data: list[LogEventCreate], db: Session) -> list[LogEventDB]:
     """
     Ingest a batch of events within a single database transaction,
     then trigger rule evaluation.
@@ -185,7 +187,7 @@ def process_log_entries(events_data: List[LogEventCreate], db: Session) -> List[
     if not events_data:
         return []
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     db_events = [
         LogEventDB(
             timestamp=item.timestamp or now,
@@ -207,7 +209,7 @@ def process_log_entries(events_data: List[LogEventCreate], db: Session) -> List[
     for event in db_events:
         try:
             rules_engine.evaluate_event(event, db)
-        except Exception as e:
+        except (SQLAlchemyError, OSError, ValueError, RuntimeError) as e:
             logger.error(f"Error evaluating rules for event {event.id}: {e}")
 
     return db_events
@@ -223,7 +225,7 @@ def parse_and_ingest_file(file_path: str, db: Session, log_type: str, batch_size
     Reads a local file line by line and ingests records in high-performance batches.
     """
     count = 0
-    batch: List[LogEventCreate] = []
+    batch: list[LogEventCreate] = []
 
     try:
         with open(file_path, "r", encoding="utf-8", errors="replace") as f:
@@ -245,6 +247,6 @@ def parse_and_ingest_file(file_path: str, db: Session, log_type: str, batch_size
                 count += len(batch)
 
         return count
-    except Exception as e:
+    except (OSError, UnicodeDecodeError, ValueError, SQLAlchemyError) as e:
         logger.error(f"Error reading file {file_path}: {e}")
         return count

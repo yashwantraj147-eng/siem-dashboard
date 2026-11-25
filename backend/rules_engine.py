@@ -1,10 +1,12 @@
 import logging
 import os
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+import yaml
 from sqlalchemy import func
 from sqlalchemy.orm import Session
-import yaml
+
 from .alerting import send_alert_webhook
 from .broadcaster import broadcaster
 from .database import AlertDB, LogEventDB
@@ -19,12 +21,12 @@ class RulesEngine:
         self.rules = self.load_rules()
         logger.info(f"Loaded {len(self.rules)} rules from {self.rules_file_path}")
 
-    def load_rules(self) -> List[Dict[str, Any]]:
+    def load_rules(self) -> list[dict[str, Any]]:
         try:
             with open(self.rules_file_path, "r", encoding="utf-8") as f:
                 content = yaml.safe_load(f)
                 return content.get("rules", []) if content else []
-        except Exception as e:
+        except (OSError, yaml.YAMLError) as e:
             logger.error(f"Failed to load rules: {e}")
             return []
 
@@ -39,7 +41,7 @@ class RulesEngine:
             if self._match_condition(event, rule.get("condition", {})):
                 self._process_rule_match(event, rule, db)
 
-    def _match_condition(self, event: LogEventDB, condition: Dict[str, Any]) -> bool:
+    def _match_condition(self, event: LogEventDB, condition: dict[str, Any]) -> bool:
         """
         Check if an event matches a rule condition.
         """
@@ -64,7 +66,7 @@ class RulesEngine:
 
         return False
 
-    def _apply_condition_filter(self, query, condition: Dict[str, Any]):
+    def _apply_condition_filter(self, query, condition: dict[str, Any]):
         """
         Apply condition filters to a SQLAlchemy query so correlation only counts matching events.
         """
@@ -84,7 +86,7 @@ class RulesEngine:
 
         return query
 
-    def _process_rule_match(self, event: LogEventDB, rule: Dict[str, Any], db: Session):
+    def _process_rule_match(self, event: LogEventDB, rule: dict[str, Any], db: Session):
         threshold = rule.get("threshold", 1)
         time_window = rule.get("time_window", 0)
 
@@ -95,7 +97,7 @@ class RulesEngine:
 
         # Correlation rule with time-window aggregation
         if time_window > 0:
-            event_time = event.timestamp or datetime.now(timezone.utc)
+            event_time = event.timestamp or datetime.now(UTC)
             past_time = event_time - timedelta(seconds=time_window)
 
             query = db.query(LogEventDB).filter(
@@ -111,8 +113,8 @@ class RulesEngine:
             if count >= threshold:
                 self._trigger_alert(rule, count, event, db)
 
-    def _trigger_alert(self, rule: Dict[str, Any], count: int, event: Optional[LogEventDB], db: Session):
-        now = datetime.now(timezone.utc)
+    def _trigger_alert(self, rule: dict[str, Any], count: int, event: LogEventDB | None, db: Session):
+        now = datetime.now(UTC)
         host_str = event.host if event else "unknown"
         alert_desc = f"{rule['description']} (Host: {host_str})"
 

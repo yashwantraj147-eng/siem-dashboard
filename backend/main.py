@@ -1,21 +1,31 @@
 import asyncio
 import csv
 import io
-import json
 import os
-import shutil
 import tempfile
-from typing import List, Optional, Set
-from fastapi import FastAPI, Depends, HTTPException, Header, UploadFile, File, Form, Query, Request
+from typing import Annotated
+
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy.orm import Session
 from sqlalchemy import desc, func
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
-from . import database, schemas, ingestion
-from .database import LogEventDB, AlertDB
+from . import database, ingestion, schemas
 from .broadcaster import broadcaster
+from .database import AlertDB, LogEventDB
 
 # Initialize Database
 database.init_db()
@@ -29,7 +39,7 @@ app = FastAPI(
 # CORS Configuration
 cors_origins_env = os.getenv("CORS_ORIGINS", "*")
 allowed_origins = [o.strip() for o in cors_origins_env.split(",") if o.strip()]
-allow_credentials = False if "*" in allowed_origins else True
+allow_credentials = "*" not in allowed_origins
 
 app.add_middleware(
     CORSMiddleware,
@@ -45,16 +55,20 @@ API_KEY = os.getenv("SIEM_API_KEY", "").strip()
 
 
 
-def verify_api_key(x_api_key: Optional[str] = Header(None)):
+def verify_api_key(x_api_key: Annotated[str | None, Header()] = None):
     """Optional API Key authentication for forwarders and data collection agents."""
     if API_KEY and x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Unauthorized: Invalid or missing X-API-Key header")
     return True
 
 
+DbSession = Annotated[Session, Depends(database.get_db)]
+ApiAuth = Annotated[bool, Depends(verify_api_key)]
+
+
 # SYSTEM HEALTH & REAL-TIME STREAMING
 @app.get("/api/health")
-def health_check(db: Session = Depends(database.get_db)):
+def health_check(db: DbSession):
     """Health check endpoint for container orchestrators and load balancers."""
     try:
         db.execute(func.now() if database.engine.dialect.name == "postgresql" else func.datetime('now'))
@@ -64,7 +78,7 @@ def health_check(db: Session = Depends(database.get_db)):
             "rules_loaded": len(ingestion.rules_engine.rules),
             "sse_subscribers": len(broadcaster.listeners)
         }
-    except Exception as e:
+    except (SQLAlchemyError, OSError) as e:
         raise HTTPException(status_code=503, detail=f"Database connectivity failed: {e}")
 
 
@@ -81,7 +95,7 @@ async def live_event_stream(request: Request):
                 try:
                     payload = await asyncio.wait_for(queue.get(), timeout=15.0)
                     yield f"data: {payload}\n\n"
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield ": ping\n\n"
         finally:
             broadcaster.unsubscribe(queue)
@@ -100,9 +114,9 @@ async def live_event_stream(request: Request):
 # INGESTION ENDPOINTS
 @app.post("/api/ingest", response_model=schemas.LogEventResponse)
 def ingest_event(
-    event: schemas.LogEventCreate, 
-    db: Session = Depends(database.get_db),
-    _auth=Depends(verify_api_key)
+    event: schemas.LogEventCreate,
+    db: DbSession,
+    _auth: ApiAuth,
 ):
     """Ingest a single structured log event."""
     result = ingestion.process_log_entry(event, db)
@@ -110,11 +124,11 @@ def ingest_event(
     return result
 
 
-@app.post("/api/ingest/batch", response_model=List[schemas.LogEventResponse])
+@app.post("/api/ingest/batch", response_model=list[schemas.LogEventResponse])
 def ingest_batch(
-    events: List[schemas.LogEventCreate], 
-    db: Session = Depends(database.get_db),
-    _auth=Depends(verify_api_key)
+    events: list[schemas.LogEventCreate],
+    db: DbSession,
+    _auth: ApiAuth,
 ):
     """Ingest multiple structured log events in a single batch transaction."""
     results = ingestion.process_log_entries(events, db)
@@ -124,10 +138,10 @@ def ingest_batch(
 
 @app.post("/api/ingest/file")
 async def ingest_file(
-    log_type: str = Form(...), 
-    file: UploadFile = File(...), 
-    db: Session = Depends(database.get_db),
-    _auth=Depends(verify_api_key)
+    log_type: Annotated[str, Form()],
+    file: Annotated[UploadFile, File()],
+    db: DbSession,
+    _auth: ApiAuth,
 ):
     """Upload a file to ingest logs in high-performance batches."""
     fd, temp_path = tempfile.mkstemp()
@@ -155,15 +169,15 @@ async def ingest_file(
 
 
 # QUERY & SEARCH ENDPOINTS
-@app.get("/api/events", response_model=List[schemas.LogEventResponse])
+@app.get("/api/events", response_model=list[schemas.LogEventResponse])
 def get_events(
-    skip: int = Query(0, ge=0), 
-    limit: int = Query(50, ge=1, le=500), 
-    severity: Optional[str] = None,
-    category: Optional[str] = None,
-    keyword: Optional[str] = None,
-    host: Optional[str] = None,
-    db: Session = Depends(database.get_db)
+    db: DbSession,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=500),
+    severity: str | None = None,
+    category: str | None = None,
+    keyword: str | None = None,
+    host: str | None = None,
 ):
     """Fetch structured log events with optional multi-field filters."""
     query = db.query(LogEventDB)
@@ -180,18 +194,18 @@ def get_events(
     return query.order_by(desc(LogEventDB.timestamp)).offset(skip).limit(limit).all()
 
 
-@app.get("/api/alerts", response_model=List[schemas.AlertResponse])
+@app.get("/api/alerts", response_model=list[schemas.AlertResponse])
 def get_alerts(
-    skip: int = Query(0, ge=0), 
-    limit: int = Query(50, ge=1, le=200), 
-    db: Session = Depends(database.get_db)
+    db: DbSession,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
 ):
     """Fetch triggered detection alerts."""
     return db.query(AlertDB).order_by(desc(AlertDB.timestamp)).offset(skip).limit(limit).all()
 
 
 @app.put("/api/alerts/{alert_id}/acknowledge", response_model=schemas.AlertResponse)
-def acknowledge_alert(alert_id: int, db: Session = Depends(database.get_db)):
+def acknowledge_alert(alert_id: int, db: DbSession):
     """Acknowledge or dismiss an alert."""
     alert = db.query(AlertDB).filter(AlertDB.id == alert_id).first()
     if not alert:
@@ -205,9 +219,9 @@ def acknowledge_alert(alert_id: int, db: Session = Depends(database.get_db)):
 
 @app.put("/api/alerts/{alert_id}/triage", response_model=schemas.AlertResponse)
 def triage_alert(
-    alert_id: int, 
-    triage_data: schemas.AlertTriage, 
-    db: Session = Depends(database.get_db)
+    alert_id: int,
+    triage_data: schemas.AlertTriage,
+    db: DbSession,
 ):
     """Update alert triage status, assignment, and resolution notes."""
     alert = db.query(AlertDB).filter(AlertDB.id == alert_id).first()
@@ -233,12 +247,12 @@ def triage_alert(
 # FORENSIC EXPORT ENDPOINTS (CSV)
 @app.get("/api/events/export")
 def export_events_csv(
-    severity: Optional[str] = None,
-    category: Optional[str] = None,
-    host: Optional[str] = None,
-    keyword: Optional[str] = None,
+    db: DbSession,
+    severity: str | None = None,
+    category: str | None = None,
+    host: str | None = None,
+    keyword: str | None = None,
     limit: int = Query(5000, ge=1, le=10000),
-    db: Session = Depends(database.get_db)
 ):
     """Export queried log events in CSV format for compliance reporting."""
     query = db.query(LogEventDB)
@@ -269,8 +283,8 @@ def export_events_csv(
 
 @app.get("/api/alerts/export")
 def export_alerts_csv(
+    db: DbSession,
     limit: int = Query(2000, ge=1, le=5000),
-    db: Session = Depends(database.get_db)
 ):
     """Export security alerts in CSV format for incident response audits."""
     alerts = db.query(AlertDB).order_by(desc(AlertDB.timestamp)).limit(limit).all()
@@ -298,7 +312,7 @@ def export_alerts_csv(
 
 # ANALYTICS & METRICS
 @app.get("/api/stats/top-ips")
-def get_top_ips(limit: int = Query(10, ge=1, le=50), db: Session = Depends(database.get_db)):
+def get_top_ips(db: DbSession, limit: int = Query(10, ge=1, le=50)):
     """Get top source hosts by event count."""
     results = (
         db.query(LogEventDB.host, func.count(LogEventDB.id).label('count'))
@@ -311,7 +325,7 @@ def get_top_ips(limit: int = Query(10, ge=1, le=50), db: Session = Depends(datab
 
 
 @app.get("/api/stats/categories")
-def get_categories(db: Session = Depends(database.get_db)):
+def get_categories(db: DbSession):
     """Get event count breakdown by category."""
     results = (
         db.query(LogEventDB.category, func.count(LogEventDB.id).label('count'))
@@ -322,7 +336,7 @@ def get_categories(db: Session = Depends(database.get_db)):
 
 
 @app.get("/api/stats/timeline")
-def get_timeline(db: Session = Depends(database.get_db)):
+def get_timeline(db: DbSession):
     """Get events per hour for timeline analytics (cross-database portable)."""
     if database.engine.dialect.name == "postgresql":
         time_col = func.to_char(LogEventDB.timestamp, 'YYYY-MM-DD HH24:00:00').label('hour')
@@ -340,7 +354,7 @@ def get_timeline(db: Session = Depends(database.get_db)):
 
 
 @app.get("/api/stats/mitre")
-def get_mitre_stats(db: Session = Depends(database.get_db)):
+def get_mitre_stats(db: DbSession):
     """Get alert counts grouped by MITRE ATT&CK tactic and technique."""
     results = (
         db.query(

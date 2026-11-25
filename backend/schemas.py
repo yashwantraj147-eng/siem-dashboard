@@ -1,15 +1,15 @@
 from datetime import datetime
-from typing import Optional
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
 class LogEventCreate(BaseModel):
-    timestamp: Optional[datetime] = None
+    timestamp: datetime | None = None
     host: str = Field(default="unknown")
     severity: str = Field(default="info")
     category: str = Field(default="system")
     message: str
-    raw: Optional[str] = None
+    raw: str | None = None
 
 
 class LogEventResponse(BaseModel):
@@ -34,11 +34,11 @@ class AlertResponse(BaseModel):
     description: str
     events_correlated: int
     acknowledged: int
-    mitre_technique: Optional[str] = None
-    mitre_tactic: Optional[str] = None
+    mitre_technique: str | None = None
+    mitre_tactic: str | None = None
     status: str = "new"
-    assigned_to: Optional[str] = None
-    resolution_notes: Optional[str] = None
+    assigned_to: str | None = None
+    resolution_notes: str | None = None
 
 
 class AlertAcknowledge(BaseModel):
@@ -47,5 +47,5 @@ class AlertAcknowledge(BaseModel):
 
 class AlertTriage(BaseModel):
     status: str = Field(..., description="Triage status: new, in_progress, resolved, or false_positive")
-    assigned_to: Optional[str] = Field(None, description="Analyst name or ID")
-    resolution_notes: Optional[str] = Field(None, description="Investigation findings and notes")
+    assigned_to: str | None = Field(None, description="Analyst name or ID")
+    resolution_notes: str | None = Field(None, description="Investigation findings and notes")

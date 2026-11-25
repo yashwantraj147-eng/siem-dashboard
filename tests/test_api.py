@@ -1,16 +1,14 @@
 import os
-from datetime import datetime, timezone
-import pytest
+from datetime import UTC, datetime
+
+from backend.database import AlertDB
 from backend.ingestion import (
-    parse_syslog, 
-    parse_auth_log, 
-    parse_nginx_access, 
+    parse_nginx_access,
+    parse_syslog,
     parse_windows_event_json,
-    process_log_entry,
     process_log_entries,
 )
 from backend.schemas import LogEventCreate
-from backend.database import AlertDB, LogEventDB
 
 
 def test_health_check(client):
@@ -81,7 +79,7 @@ def test_correlation_bug_fix(db_session):
     Verify that 5 benign events do NOT trigger a brute-force alert,
     whereas 5 failed login events DO trigger the alert.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     
     # 1. Ingest 5 benign info logs from host "srv-safe"
     benign_events = [
@@ -157,7 +155,7 @@ def test_alert_acknowledgment(client, db_session):
         description="Test alert description",
         events_correlated=1,
         acknowledged=0,
-        timestamp=datetime.now(timezone.utc)
+        timestamp=datetime.now(UTC)
     )
     db_session.add(alert)
     db_session.commit()
@@ -201,7 +199,7 @@ def test_alert_triage_and_mitre(client, db_session):
         mitre_technique="T1110.001",
         mitre_tactic="Credential Access",
         status="new",
-        timestamp=datetime.now(timezone.utc)
+        timestamp=datetime.now(UTC)
     )
     db_session.add(alert)
     db_session.commit()
